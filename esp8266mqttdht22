@@ -1,0 +1,164 @@
+//stuesensor  
+//udestue active
+//kontor 
+//bad 
+//drivhusstor
+
+#include <DHT.h>
+
+
+
+
+
+
+// Get ESP8266 going with Arduino IDE
+// - https://github.com/esp8266/Arduino#installing-with-boards-manager
+// Required libraries (sketch -> include library -> manage libraries)
+// - PubSubClient by Nick â€˜O Leary
+// - DHT sensor library by Adafruit
+
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+
+
+#define wifi_ssid "xxx"
+#define wifi_password "xxx"
+
+#define mqtt_server "192.168.1.248"
+#define mqtt_user "sensor"
+#define mqtt_password "sensor123"
+
+#define humidity_topic "ajax/drivhusstor/humidity"
+#define temperature_topic "ajax/drivhusstor/temperature"
+#define voltage_topic "ajax/drivhusstor/voltage"
+#define connect_topic "ajax/drivhusstor/connect"
+
+
+#define DHTTYPE DHT22
+#define DHTPIN  12
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+DHT dht(DHTPIN, DHTTYPE, 11); // 11 works fine for ESP8266
+ADC_MODE(ADC_VCC);  //Vcc read mode
+  unsigned long oldmillis;
+  unsigned long newmillis;
+  unsigned long passedmillis;
+
+const int SleepMilliSeconds = 3600000000;
+//const int SleepMilliSeconds = 1200000000;
+const int SleepMilliRetry = 300000000;
+
+
+int resetcycle;
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+
+oldmillis = millis();
+ 
+   
+  setup_wifi();
+newmillis = millis();
+
+  passedmillis = newmillis - oldmillis;
+  client.setServer(mqtt_server, 1883);
+  resetcycle = 0;
+}
+
+void setup_wifi() {
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(wifi_ssid);
+
+  WiFi.begin(wifi_ssid, wifi_password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    resetcycle++;
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    // If you do not want to use a username and password, change next line to
+    // if (client.connect("ESP8266Client")) {
+    if (client.connect("ESP8266Client", mqtt_user, mqtt_password)) {
+      Serial.println("connected");
+    } else {
+      if ( resetcycle >= 5 ) {
+        ESP.deepSleep(SleepMilliRetry, WAKE_RF_DEFAULT);  // After deep sleep we wake up by a reset and with RF modem enabled
+        delay(100);
+      }
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+bool checkBound(float newValue, float prevValue, float maxDiff) {
+  return !isnan(newValue) &&
+         (newValue < prevValue - maxDiff || newValue > prevValue + maxDiff);
+}
+
+long lastMsg = 0;
+float temp = 0.0;
+float hum = 0.0;
+float diff = 1.0;
+float vcc;
+float CalFactor = 1.0;
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  long now = millis();
+  if (now - lastMsg > 2000) {
+    lastMsg = now;
+
+    float newTemp = dht.readTemperature();
+    float newHum = dht.readHumidity();
+
+    
+      temp = newTemp;
+      Serial.print("New temperature:");
+      Serial.println(String(temp).c_str());
+      client.publish(temperature_topic, String(temp).c_str(), true);
+    
+
+    
+      hum = newHum;
+      Serial.print("New humidity:");
+      Serial.println(String(hum).c_str());
+      client.publish(humidity_topic, String(hum).c_str(), true);
+    
+    vcc = ESP.getVcc()*0.001024*CalFactor;  // Measure Vcc
+     Serial.print("New VCC:");
+     Serial.println(String(vcc).c_str());
+     client.publish(voltage_topic, String(vcc).c_str(), true);
+
+     Serial.print("New connection time:");
+     Serial.println(String(vcc).c_str());
+     client.publish(connect_topic, String(passedmillis).c_str(), true);
+  }
+  Serial.println("Entering deep sleep ");
+ ESP.deepSleep(SleepMilliSeconds, WAKE_RF_DEFAULT);  // After deep sleep we wake up by a reset and with RF modem enabled
+  delay(100);
+}
